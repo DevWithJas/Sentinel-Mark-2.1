@@ -6,8 +6,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 import numpy as np
 from streamlit_folium import folium_static
-import pandas as pd
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 from tensorflow.keras.models import Sequential
@@ -126,7 +124,6 @@ def set_bg_as_image():
         unsafe_allow_html=True
     )
 
-
 # Set the background
 set_bg_as_image()
 
@@ -136,7 +133,14 @@ sidebar_option = st.sidebar.selectbox("Choose an option:", ["Intensity and Chart
 
 # Remove the file uploader and read CSV directly from URL
 csv_url = 'https://raw.githubusercontent.com/DevWithJas/Sentinel-Mark-2/refs/heads/main/crime-sentinel.csv.csv'
-df = pd.read_csv(csv_url)
+
+# Caching the data loading to optimize memory usage
+@st.cache_data
+def load_data():
+    df = pd.read_csv(csv_url)
+    return df
+
+df = load_data()
 
 # Display the heading
 st.title("Welcome to Sentinel Mark 2 : Crime predictive Model ")
@@ -196,8 +200,16 @@ elif sidebar_option == "Crime Map":
     st.subheader(f'{intensity_map_emoji} Crime Probability Map')
     X_train, X_test, y_train, y_test = train_test_split(df[['lat', 'long']], df[crime_types], test_size=0.3, random_state=42)
     class_weights = 'balanced'
-    multi_output_rf = RandomForestClassifier(n_estimators=100, class_weight=class_weights, random_state=42)
-    multi_output_rf.fit(X_train, y_train)
+    
+    # Caching the model training to optimize memory usage
+    @st.cache_resource
+    def train_random_forest(X_train, y_train):
+        multi_output_rf = RandomForestClassifier(n_estimators=100, class_weight=class_weights, random_state=42)
+        multi_output_rf.fit(X_train, y_train)
+        return multi_output_rf
+
+    multi_output_rf = train_random_forest(X_train, y_train)
+    
     y_pred_proba = multi_output_rf.predict_proba(X_test)
     y_pred_proba_positive = np.array([proba[:, 1] for proba in y_pred_proba]).T
 
@@ -261,21 +273,25 @@ X_test = feature_scaler.transform(X_test)
 y_train_scaled = target_scaler.fit_transform(y_train)
 y_test_scaled = target_scaler.transform(y_test)
 
-model = Sequential([
-    Dense(128, activation='relu', input_shape=(2,)),
-    BatchNormalization(),
-    Dropout(0.3),
-    Dense(64, activation='relu'),
-    BatchNormalization(),
-    Dropout(0.3),
-    Dense(9, activation='linear')  # Update to match the number of columns in target variable
-])
+# Caching the model training to optimize memory usage
+@st.cache_resource
+def train_dnn_model(X_train, y_train_scaled):
+    model = Sequential([
+        Dense(128, activation='relu', input_shape=(2,)),
+        BatchNormalization(),
+        Dropout(0.3),
+        Dense(64, activation='relu'),
+        BatchNormalization(),
+        Dropout(0.3),
+        Dense(9, activation='linear')  # Update to match the number of columns in target variable
+    ])
+    # Compile the model
+    model.compile(optimizer='adam', loss='mean_squared_error')
+    # Training the model
+    model.fit(X_train, y_train_scaled, epochs=10, batch_size=32, validation_split=0.2)
+    return model
 
-# Compile the model
-model.compile(optimizer='adam', loss='mean_squared_error')
-
-# Training the model
-model.fit(X_train, y_train_scaled, epochs=10, batch_size=32, validation_split=0.2)
+model = train_dnn_model(X_train, y_train_scaled)
 
 # Evaluating the model
 y_pred_scaled = model.predict(X_test)
